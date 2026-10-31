@@ -1,8 +1,8 @@
 # P.A.C.T. Gatekeeper: Isolated Asymmetric Tool-Execution Interceptor
 
-Deterministic, out-of-process execution gate for autonomous AI agent tool invocation.
+Deterministic, out-of-process execution gate for autonomous AI agent tool invocation. Built to mitigate core vulnerabilities identified in the **OWASP Agentic Security Initiative**.
 
-## Target Vulnerability Coverage (OWASP Agentic Security Initiative)
+## Target Vulnerability Coverage
 * **ASI02: Tool Misuse and Exploitation** — Mitigated via out-of-process Euclidean parameter vector clamping.
 * **ASI03: Identity & Privilege Abuse** — Mitigated by eliminating ambient agent authority and requiring payload-bound asymmetric (Ed25519) signatures for high-impact actions.
 
@@ -10,9 +10,9 @@ Deterministic, out-of-process execution gate for autonomous AI agent tool invoca
 
 ## Abstract & Architecture
 
-The **P.A.C.T. Gatekeeper** decouples AI agent reasoning from state-mutating execution environments. Rather than granting autonomous agents ambient credentials to execute shell commands, database queries, or financial transactions, all tool invocations are treated as unprivileged **Intent Proposals**.
+The **P.A.C.T. (Parameter Analysis & Cryptographic Trust) Gatekeeper** decouples AI agent reasoning from state-mutating execution environments. Rather than granting autonomous agents ambient credentials to execute shell commands, database queries, or financial transactions, all tool invocations are treated as unprivileged **Intent Proposals**.
 
-```text
+```
 [ Compromised Agent / LLM ]
            │
            ▼ (Tool Call Proposal: name, parameters)
@@ -56,11 +56,77 @@ When a proposal breaches the autonomous ceiling:
 
 ---
 
+## Implementation Reference (Rust)
+
+```rust
+use sha2::{Sha256, Digest};
+use ed25519_dalek::{Verifier, Signature, VerifyingKey};
+
+#[derive(Debug, PartialEq)]
+pub enum GateDecision {
+    PermitAutonomous,
+    EscalateToSigner { reason: String, payload_digest: [u8; 32] },
+    HardReject(String),
+}
+
+pub struct BlastRadiusVector {
+    pub read_volume: f32,   // 0.0 to 1.0 (Data exposure risk)
+    pub write_scope: f32,   // 0.0 to 1.0 (State mutation / overwrite risk)
+    pub financial_tier: f32,// 0.0 to 1.0 (Transaction or resource cost)
+}
+
+impl BlastRadiusVector {
+    pub fn magnitude(&self) -> f32 {
+        (self.read_volume.powi(2) + self.write_scope.powi(2) + self.financial_tier.powi(2)).sqrt()
+    }
+}
+
+pub struct ExecutionGate {
+    pub autonomous_ceiling: f32, // Maximum magnitude allowed without human sign-off
+    pub partner_public_key: VerifyingKey,
+}
+
+impl ExecutionGate {
+    pub fn evaluate_proposal(
+        &self, 
+        tool_name: &str, 
+        raw_params: &str, 
+        vector: &BlastRadiusVector
+    ) -> GateDecision {
+        // Step 1: Compute deterministic SHA-256 parameter digest
+        let mut hasher = Sha256::new();
+        hasher.update(tool_name.as_bytes());
+        hasher.update(b":");
+        hasher.update(raw_params.as_bytes());
+        let digest: [u8; 32] = hasher.finalize().into();
+
+        // Step 2: Evaluate Euclidean Blast Radius
+        let mag = vector.magnitude();
+        if mag > self.autonomous_ceiling {
+            return GateDecision::EscalateToSigner {
+                reason: format!("Vector magnitude {:.3} exceeds threshold {:.3}", mag, self.autonomous_ceiling),
+                payload_digest: digest,
+            };
+        }
+
+        GateDecision::PermitAutonomous
+    }
+
+    pub fn verify_human_signature(
+        &self, 
+        digest: &[u8; 32], 
+        signature: &Signature
+    ) -> bool {
+        self.partner_public_key.verify(digest, signature).is_ok()
+    }
+}
+```
+
 ## Quickstart
 
 ### Build and Test
 ```bash
-git clone [https://github.com/jondrennen-arch/pact-gatekeeper.git](https://github.com/jondrennen-arch/pact-gatekeeper.git)
+git clone https://github.com/jondrennen-arch/pact-gatekeeper.git
 cd pact-gatekeeper
 cargo test
 cargo run
